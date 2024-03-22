@@ -1,4 +1,4 @@
-/* Copyright 2023 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2023 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -43,7 +43,7 @@ struct DeserializeShardingOptions
 };
 
 // Casts `DeserializeOptions` into `DeserializeShardingOptions`.
-StatusOr<std::unique_ptr<DeserializeShardingOptions>>
+absl::StatusOr<std::unique_ptr<DeserializeShardingOptions>>
 GetDeserializeShardingOptions(std::unique_ptr<DeserializeOptions> options);
 
 }  // namespace ifrt

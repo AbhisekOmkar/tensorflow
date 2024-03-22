@@ -29,13 +29,13 @@ limitations under the License.
 #include "stablehlo/transforms/Passes.h"  // from @stablehlo
 #include "tensorflow/compiler/mlir/init_mlir.h"
 #include "tensorflow/compiler/mlir/lite/quantization/ir/QuantOps.h"
+#include "tensorflow/compiler/mlir/quantization/stablehlo/cc/pass_pipeline.h"
 #include "tensorflow/compiler/mlir/quantization/stablehlo/passes/bridge/passes.h"
 #include "tensorflow/compiler/mlir/quantization/stablehlo/passes/passes.h"
 #include "tensorflow/compiler/mlir/quantization/stablehlo/passes/testing/passes.h"
 #include "tensorflow/compiler/mlir/tensorflow/dialect_registration.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_dialect.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_executor.h"
-#include "tensorflow/compiler/mlir/tensorflow/ir/tf_ops.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_saved_model.h"
 #include "tensorflow/compiler/mlir/tensorflow/transforms/passes.h"
 #include "xla/mlir_hlo/mhlo/IR/register.h"
@@ -53,6 +53,9 @@ int main(int argc, char** argv) {
   mlir::mhlo::registerAllMhloPasses();
   // These passes are only used for testing purposes.
   mlir::quant::stablehlo::testing::registerTestPasses();
+
+  // Register StableHLO Quantizer pass pipelines.
+  mlir::quant::stablehlo::RegisterPassPipelines();
 
   mlir::DialectRegistry registry;
   registry.insert<mlir::scf::SCFDialect, mlir::TF::TensorFlowDialect,

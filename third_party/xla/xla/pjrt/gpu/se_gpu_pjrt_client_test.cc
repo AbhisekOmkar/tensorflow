@@ -1,4 +1,4 @@
-/* Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2022 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -37,6 +37,7 @@ limitations under the License.
 #include "xla/literal.h"
 #include "xla/literal_util.h"
 #include "xla/pjrt/distributed/in_memory_key_value_store.h"
+#include "xla/pjrt/pjrt_future.h"
 #include "xla/pjrt/utils.h"
 #include "xla/service/hlo_parser.h"
 #include "xla/statusor.h"
@@ -55,7 +56,7 @@ using ::testing::ElementsAre;
 using ::testing::HasSubstr;
 using ::tsl::testing::StatusIs;
 
-StatusOr<std::unique_ptr<xla::PjRtLoadedExecutable>> CompileExecutable(
+absl::StatusOr<std::unique_ptr<xla::PjRtLoadedExecutable>> CompileExecutable(
     absl::string_view program, xla::PjRtClient& client,
     xla::CompileOptions compile_options = xla::CompileOptions()) {
   TF_ASSIGN_OR_RETURN(auto hlo_module,
@@ -67,8 +68,8 @@ StatusOr<std::unique_ptr<xla::PjRtLoadedExecutable>> CompileExecutable(
 
 // Given the result of a PjrtExecutable::Execute call (TF-status of vectors of
 // vectors), extract the zeroth result from the zeroth device.
-StatusOr<std::shared_ptr<xla::Literal>> ExtractSingleResult(
-    xla::StatusOr<std::vector<std::vector<std::unique_ptr<xla::PjRtBuffer>>>>&
+absl::StatusOr<std::shared_ptr<xla::Literal>> ExtractSingleResult(
+    absl::StatusOr<std::vector<std::vector<std::unique_ptr<xla::PjRtBuffer>>>>&
         result) {
   TF_RETURN_IF_ERROR(result.status());
   TF_RET_CHECK(result->size() == 1);
@@ -170,7 +171,7 @@ TEST(StreamExecutorGpuClientTest, SendErrorNoDeadLock) {
   SendCallback send_callback = {
       /*channel_id=*/1,
       [&](const PjRtTransferMetadata&, PjRtChunk, int64_t, bool) {
-        return InternalError("Uh-oh, can send chunk to host");
+        return Internal("Uh-oh, can send chunk to host");
       }};
 
   // No-op Recv handler.
@@ -250,7 +251,7 @@ TEST(StreamExecutorGpuClientTest, ToLiteralAsync) {
   TF_ASSERT_OK(
       transfer_manager->TransferLiteralToBuffer(0, src_literal, [&]() {}));
 
-  buffer->ToLiteral(literal.get(), [&](Status s) {
+  buffer->ToLiteral(literal.get()).OnReady([&](Status s) {
     absl::MutexLock l(&mu);
     TF_ASSERT_OK(s);
     got_literal = true;
@@ -284,7 +285,7 @@ TEST(StreamExecutorGpuClientTest, ToLiteralAsyncBeforeBufferReady) {
       ShapeUtil::DeviceShapeToHostShape(buffer->on_device_shape()));
   bool got_literal = false;
 
-  buffer->ToLiteral(literal.get(), [&](Status s) {
+  buffer->ToLiteral(literal.get()).OnReady([&](Status s) {
     absl::MutexLock l(&mu);
     TF_ASSERT_OK(s);
     got_literal = true;
@@ -328,11 +329,6 @@ TEST(StreamExecutorGpuClientTest, FromHostAsync) {
     buffers.emplace_back(transfer_manager->RetrieveBuffer(i));
   }
 
-  absl::Mutex mu;
-  std::vector<std::shared_ptr<Literal>> literals;
-  int got_literal_count = 0;
-  int got_callback_count = 0;
-
   for (int i = 0; i < src_shapes.size(); ++i) {
     TF_ASSERT_OK(transfer_manager->TransferRawDataToBuffer(
         i,
@@ -341,10 +337,15 @@ TEST(StreamExecutorGpuClientTest, FromHostAsync) {
         [&]() {}));
   }
 
+  absl::Mutex mu;
+  std::vector<std::shared_ptr<Literal>> literals;
+  int got_literal_count = 0;
+  int got_callback_count = 0;
+
   for (auto& buffer : buffers) {
     literals.push_back(std::make_shared<Literal>(
         ShapeUtil::DeviceShapeToHostShape(buffer->on_device_shape())));
-    buffer->ToLiteral(literals.back().get(), [&](Status s) {
+    buffer->ToLiteral(literals.back().get()).OnReady([&](Status s) {
       absl::MutexLock l(&mu);
       TF_ASSERT_OK(s);
       ++got_literal_count;
@@ -427,6 +428,32 @@ TEST(StreamExecutorGpuClientTest, CopyRawToHostOutOfRange) {
   free(dst);
 }
 
+TEST(StreamExecutorGpuClientTest, CopyRawToHostFuture) {
+  TF_ASSERT_OK_AND_ASSIGN(auto client,
+                          GetStreamExecutorGpuClient(GpuClientOptions()));
+  auto literal = xla::LiteralUtil::CreateR1<float>({41.0f, 42.0f});
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<PjRtBuffer> buffer,
+      client->BufferFromHostLiteral(literal, client->addressable_devices()[0]));
+
+  auto dst_promise = xla::PjRtFuture<absl::StatusOr<void*>>::CreatePromise();
+  xla::PjRtFuture<absl::StatusOr<void*>> dst_future(dst_promise);
+
+  TF_ASSERT_OK_AND_ASSIGN(int64_t size, buffer->GetOnDeviceSizeInBytes());
+  buffer->GetReadyFuture().OnReady([dst_promise = std::move(dst_promise),
+                                    size](absl::Status status) mutable {
+    dst_promise.Set(aligned_alloc(size, 0));
+  });
+
+  auto result = buffer->CopyRawToHostFuture(dst_future, 0, size);
+  TF_EXPECT_OK(result.Await());
+  TF_ASSERT_OK_AND_ASSIGN(auto* dst, dst_future.Await());
+  EXPECT_EQ(*(static_cast<float*>(dst)), 41.0f);
+  EXPECT_EQ(*(static_cast<float*>(dst) + 1), 42.0f);
+
+  free(dst);
+}
+
 TEST(StreamExecutorGpuClientTest, AsyncCopyToDevice) {
   TF_ASSERT_OK_AND_ASSIGN(auto client,
                           GetStreamExecutorGpuClient(GpuClientOptions()));
@@ -472,9 +499,9 @@ TEST(StreamExecutorGpuClientTest, CreateMixOfErrorBuffers) {
     src_literals.emplace_back(LiteralUtil::CreateR1<float>(data));
     src_shapes.push_back(src_literals.back().shape());
   }
-  ASSERT_OK_AND_ASSIGN(auto transfer_manager,
-                       client->CreateBuffersForAsyncHostToDevice(
-                           src_shapes, client->addressable_devices()[0]));
+  TF_ASSERT_OK_AND_ASSIGN(auto transfer_manager,
+                          client->CreateBuffersForAsyncHostToDevice(
+                              src_shapes, client->addressable_devices()[0]));
   std::vector<std::unique_ptr<PjRtBuffer>> buffers;
   for (int i = 0; i < src_shapes.size(); ++i) {
     buffers.emplace_back(transfer_manager->RetrieveBuffer(i));
@@ -485,15 +512,15 @@ TEST(StreamExecutorGpuClientTest, CreateMixOfErrorBuffers) {
   for (int i = 0; i < 4; ++i) {
     auto& buffer = buffers[i];
     if (i == 0 || i == 3) {
-      ASSERT_OK(transfer_manager->TransferLiteralToBuffer(i, src_literals[i],
-                                                          [&]() {}));
+      TF_ASSERT_OK(transfer_manager->TransferLiteralToBuffer(i, src_literals[i],
+                                                             [&]() {}));
       buffer->GetReadyFuture().OnReady([&](absl::Status s) {
         absl::MutexLock l(&mu);
-        ASSERT_OK(s);
+        TF_ASSERT_OK(s);
         ++got_callback_count;
       });
     } else {
-      absl::Status error = InternalError("error %d", i);
+      absl::Status error = Internal("error %d", i);
       transfer_manager->SetBufferError(i, error);
       buffer->GetReadyFuture().OnReady(
           [error, &mu, &got_callback_count](absl::Status s) {

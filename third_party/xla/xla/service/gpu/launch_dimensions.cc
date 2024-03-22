@@ -1,4 +1,4 @@
-/* Copyright 2020 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2020 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -16,14 +16,15 @@ limitations under the License.
 #include "xla/service/gpu/launch_dimensions.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <ostream>
 
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "absl/strings/str_format.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
-#include "xla/statusor.h"
 #include "xla/stream_executor/device_description.h"
 #include "xla/stream_executor/launch_dim.h"
 #include "xla/util.h"
@@ -174,7 +175,7 @@ BlockSizes GetBlockSizes(LaunchDimensionsConfig dim_config,
 
 }  // namespace
 
-StatusOr<LaunchDimensions> CalculateLaunchDimensions(
+LaunchDimensions CalculateLaunchDimensions(
     const Shape& shape, const se::DeviceDescription& gpu_device_info,
     LaunchDimensionsConfig dim_config) {
   int64_t num_elements = ShapeUtil::ElementsIn(shape);
@@ -184,13 +185,6 @@ StatusOr<LaunchDimensions> CalculateLaunchDimensions(
   num_elements = CeilOfRatio(num_elements, int64_t{dim_config.unroll_factor});
   BlockSizes sizes =
       GetBlockSizes(dim_config, gpu_device_info, shape, num_elements);
-  if (gpu_device_info.block_dim_limit().x > 0 &&
-      sizes.block_count >= gpu_device_info.block_dim_limit().x) {
-    return absl::UnimplementedError(
-        absl::StrCat("Kernel launch needs more blocks (", sizes.block_count,
-                     ") than allowed by hardware (",
-                     gpu_device_info.block_dim_limit().x, ")."));
-  }
 
   return LaunchDimensions(
       se::BlockDim(sizes.block_count, 1, 1),

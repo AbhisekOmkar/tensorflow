@@ -1,4 +1,4 @@
-/* Copyright 2022 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2022 The OpenXLA Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -25,18 +25,20 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/strings/str_join.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "xla/hlo/ir/hlo_casting_utils.h"
 #include "xla/hlo/ir/hlo_instruction.h"
+#include "xla/hlo/ir/hlo_instructions.h"
 #include "xla/literal.h"
 #include "xla/service/gpu/backend_configs.pb.h"
 #include "xla/service/gpu/cublas_cudnn.h"
 #include "xla/service/hlo_creation_utils.h"
 #include "xla/service/pattern_matcher.h"
-#include "xla/statusor.h"
 #include "xla/xla_data.pb.h"
 #include "tsl/platform/errors.h"
 #include "tsl/platform/logging.h"
+#include "tsl/platform/statusor.h"
 
 namespace xla::gpu {
 
@@ -106,8 +108,9 @@ std::optional<int64_t> NumTrailingZeroOutputFeatures(HloInstruction* conv) {
   // If the filter is reordered for an int8x32 NCHW_VECT_C convolution, find the
   // original, un-reordered filter and check *it* for trailing zero output
   // features.
-  auto backend_config = conv->backend_config<CudnnConvBackendConfig>();
-  if (backend_config.ok() && backend_config->reordered_int8_nchw_vect()) {
+  auto backend_config = conv->backend_config<GpuBackendConfig>();
+  if (backend_config.ok() &&
+      backend_config->cudnn_conv_backend_config().reordered_int8_nchw_vect()) {
     VLOG(2) << "Matched int8x32 convolution with filter reordering";
 
     // Try to set weights to the original, un-reordered value.
@@ -279,7 +282,7 @@ std::optional<int64_t> NumTrailingZeroOutputFeatures(HloInstruction* conv) {
   return std::nullopt;
 }
 
-StatusOr<bool> TrySimplifyPadding(HloInstruction* instr) {
+absl::StatusOr<bool> TrySimplifyPadding(HloInstruction* instr) {
   // Match one of the following patterns.
   //   conv -> slice -> pad
   //   conv -> reshape -> slice-> pad
@@ -462,7 +465,7 @@ StatusOr<bool> TrySimplifyPadding(HloInstruction* instr) {
 
 }  // anonymous namespace
 
-StatusOr<bool> CudnnSimplifyPadding::Run(
+absl::StatusOr<bool> CudnnSimplifyPadding::Run(
     HloModule* module,
     const absl::flat_hash_set<absl::string_view>& execution_threads) {
   bool changed = false;

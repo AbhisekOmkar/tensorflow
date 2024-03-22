@@ -1,12 +1,12 @@
 load("//tensorflow:strict.default.bzl", "py_strict_library")
-load("//tensorflow/core/platform:rules_cc.bzl", "cc_library")
 load("@flatbuffers//:build_defs.bzl", "flatbuffer_cc_library")
-load("//tensorflow:tensorflow.bzl", "tf_cc_binary", "tf_cc_test")
-load("//tensorflow:tensorflow.default.bzl", "get_compatible_with_portable")
 load(
     "@llvm-project//mlir:tblgen.bzl",
     "gentbl_cc_library",
 )
+load("//tensorflow:tensorflow.bzl", "tf_cc_binary", "tf_cc_test")
+load("//tensorflow:tensorflow.default.bzl", "get_compatible_with_portable")
+load("//tensorflow/core/platform:rules_cc.bzl", "cc_library")
 # copybara:uncomment load("//tools/build_defs/proto/cpp:cc_proto_library.bzl", "cc_proto_library")
 
 package(
@@ -82,8 +82,11 @@ cc_library(
         "//tensorflow/compiler/mlir/lite:tensorflow_lite",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:ArithDialect",
+        "@llvm-project//mlir:CallOpInterfaces",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:QuantOps",
+        "@llvm-project//mlir:SideEffectInterfaces",
     ],
 )
 
@@ -120,7 +123,7 @@ cc_library(
     deps = [
         ":common",
         "//tensorflow/compiler/mlir/lite:tensorflow_lite",
-        "//tensorflow/compiler/mlir/lite/quantization:quantization_lib",
+        "//tensorflow/compiler/mlir/quantization/common/quantization_lib",
         "//tensorflow/compiler/mlir/tensorflow",
         "//tensorflow/compiler/mlir/tensorflow:verification_utils",
         "@llvm-project//llvm:Support",
@@ -214,6 +217,7 @@ cc_library(
         "//tensorflow/compiler/mlir/lite/experimental/tac/hardwares:target_hardware",
         "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:CallOpInterfaces",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Pass",
@@ -258,9 +262,11 @@ cc_library(
         "@com_google_protobuf//:protobuf_headers",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:ArithDialect",
+        "@llvm-project//mlir:CallOpInterfaces",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:Pass",
+        "@llvm-project//mlir:SideEffectInterfaces",
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:Transforms",
     ],

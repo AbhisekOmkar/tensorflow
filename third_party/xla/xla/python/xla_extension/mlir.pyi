@@ -1,4 +1,4 @@
-# Copyright 2021 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2021 The OpenXLA Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,7 +18,7 @@ from . import XlaComputation
 
 def xla_computation_to_mlir_module(computation: XlaComputation) -> str: ...
 def mlir_module_to_xla_computation(
-    mlir_module: str, use_tuple_args: bool = ...,
+    mlir_module: Union[bytes, str], use_tuple_args: bool = ...,
     return_tuple: bool = ...) -> XlaComputation: ...
 def mhlo_to_stablehlo(mlir_module: Union[bytes, str]) -> str: ...
 def stablehlo_to_mhlo(mlir_module: Union[bytes, str]) -> str: ...

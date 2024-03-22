@@ -41,6 +41,7 @@ limitations under the License.
 #include "tensorflow/core/common_runtime/placer.h"
 #include "tensorflow/core/common_runtime/replicate_per_replica_nodes.h"
 #include "tensorflow/core/framework/device.h"
+#include "tensorflow/core/framework/function.h"
 #include "tensorflow/core/framework/graph.pb.h"
 #include "tensorflow/core/framework/metrics.h"
 #include "tensorflow/core/framework/optimized_function_graph.pb.h"
@@ -72,7 +73,7 @@ Status ValidateNoListArguments(
           " and outputs");
     }
   }
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 Status ValidateMultiDeviceOptions(
@@ -107,7 +108,7 @@ Status ValidateMultiDeviceOptions(
         options.output_devices.size(),
         " number of arguments = ", signature.output_arg_size());
   }
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 Status SetArgShape(const std::unordered_map<int, DtypeAndPartialTensorShape>&
@@ -133,7 +134,7 @@ Status SetArgShape(const std::unordered_map<int, DtypeAndPartialTensorShape>&
       }
     }
   }
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 const string* AssignedOrRequestedDeviceName(const Node& node) {
@@ -202,7 +203,7 @@ Status WriteToCache(const std::string& dir_name, const std::string& file_name,
           << absl::ToInt64Milliseconds(cache_writing_duration)
           << " msecs, file name: " << file_name;
 
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 // Retrieves the OptimizedFunctionGraphInfo from a cache file.
@@ -218,10 +219,10 @@ StatusOr<OptimizedFunctionGraphInfo> ReadFromCache(const string& file_name,
 
   optimized_function_graph_proto.ParseFromString(
       optimized_function_graph_proto_str);
-  TF_ASSIGN_OR_RETURN(
-      StatusOr<OptimizedFunctionGraphInfo>
-          optimized_function_graph_info_restored,
-      OptimizedFunctionGraphInfo::FromProto(optimized_function_graph_proto));
+  TF_ASSIGN_OR_RETURN(absl::StatusOr<OptimizedFunctionGraphInfo>
+                          optimized_function_graph_info_restored,
+                      OptimizedFunctionGraphInfo::FromProto(
+                          std::move(optimized_function_graph_proto)));
 
   const absl::Duration cache_reading_duration =
       absl::Now() - cache_reading_start_time;
@@ -294,7 +295,7 @@ Status GetGraphAndArgRets(const string& function_name, AttrSlice attrs,
   for (const Node* node : fbody->control_ret_nodes) {
     control_ret_node_names->push_back(node->name());
   }
-  return OkStatus();
+  return absl::OkStatus();
 }
 }  // namespace
 
@@ -460,7 +461,7 @@ Status PinArgsAndRets(const std::vector<string>& input_devices,
       node->set_assigned_device_name(output_devices[index]);
     }
   }
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 StatusOr<OptimizedFunctionGraphInfo> OptimizeFunctionGraph(
@@ -640,8 +641,12 @@ StatusOr<OptimizedFunctionGraphInfo> OptimizeFunctionGraph(
 
   graph->mutable_flib_def()->set_default_registry(nullptr);
   graph->mutable_flib_def()->Clear();
+
+  FunctionLibraryDefinition pruned_lib_def =
+      reachable_lib_def.ReachableDefinitions(*graph);
+
   return OptimizedFunctionGraphInfo(
-      function_name, std::move(graph), std::move(reachable_lib_def),
+      function_name, std::move(graph), std::move(pruned_lib_def),
       node_name_to_control_ret, ret_types, ret_nodes.size(),
       env->NowMicros() - graph_optimization_start_time_usecs,
       optimization_source);

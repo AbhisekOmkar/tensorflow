@@ -61,9 +61,9 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         "//tensorflow/core/common_runtime/next_pluggable_device/c:plugin_c_api_hdrs",
-        "@local_tsl//tsl/c:tsl_status_internal",
         "@local_tsl//tsl/platform:errors",
         "@local_tsl//tsl/platform:statusor",
+        "@local_xla//xla/tsl/c:tsl_status_internal",
     ],
 )
 
@@ -246,7 +246,9 @@ cc_library(
     name = "loose_headers",
     tags = ["avoid_dep"],
     textual_hdrs = ["c_plugin_op_kernel.h"],
-    visibility = [":__pkg__"],
+    visibility = [
+        "//visibility:private",  # Only private by automation, not intent. Owner may accept CLs adding visibility. See go/scheuklappen#explicit-private.
+    ],
 )
 
 cc_library(

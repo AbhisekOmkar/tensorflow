@@ -75,39 +75,29 @@ class MockCoordinationServiceAgent : public CoordinationServiceAgent {
   MOCK_METHOD(Status, WaitForAllTasks, (const DeviceInfo& local_devices),
               (override));
   MOCK_METHOD(const DeviceInfo&, GetClusterDeviceInfo, (), (override));
-  MOCK_METHOD(StatusOr<CoordinatedTask>, GetOwnTask, (), (override));
-  MOCK_METHOD(StatusOr<std::vector<CoordinatedTaskStateInfo>>, GetTaskState,
-              (const std::vector<CoordinatedTask>& task), (override));
+  MOCK_METHOD(absl::StatusOr<CoordinatedTask>, GetOwnTask, (), (override));
+  MOCK_METHOD(absl::StatusOr<std::vector<CoordinatedTaskStateInfo>>,
+              GetTaskState, (const std::vector<CoordinatedTask>& task),
+              (override));
   MOCK_METHOD(Status, ReportError, (const Status& error), (override));
   MOCK_METHOD(Status, Shutdown, (), (override));
   MOCK_METHOD(Status, Reset, (), (override));
-  MOCK_METHOD(StatusOr<std::string>, GetKeyValue, (std::string_view key),
+  MOCK_METHOD(absl::StatusOr<std::string>, GetKeyValue, (std::string_view key),
               (override));
-  MOCK_METHOD(StatusOr<std::string>, GetKeyValue,
-              (const char* key, int64_t key_size), (override));
-  MOCK_METHOD(StatusOr<std::string>, GetKeyValue,
-              (const char* key, int64_t key_size, int64_t timeout_seconds),
-              (override));
-  MOCK_METHOD(StatusOr<std::string>, GetKeyValue,
+  MOCK_METHOD(absl::StatusOr<std::string>, GetKeyValue,
               (std::string_view key, absl::Duration timeout), (override));
   MOCK_METHOD(std::shared_ptr<CallOptions>, GetKeyValueAsync,
               (std::string_view key, StatusOrValueCallback done), (override));
-  MOCK_METHOD(StatusOr<std::string>, TryGetKeyValue, (std::string_view key),
-              (override));
-  MOCK_METHOD(StatusOr<std::vector<KeyValueEntry>>, GetKeyValueDir,
+  MOCK_METHOD(absl::StatusOr<std::string>, TryGetKeyValue,
+              (std::string_view key), (override));
+  MOCK_METHOD(absl::StatusOr<std::vector<KeyValueEntry>>, GetKeyValueDir,
               (std::string_view key), (override));
   MOCK_METHOD(void, GetKeyValueDirAsync,
               (std::string_view key, StatusOrValueDirCallback done),
               (override));
   MOCK_METHOD(Status, InsertKeyValue,
               (std::string_view key, std::string_view value), (override));
-  MOCK_METHOD(Status, InsertKeyValue,
-              (const char* key, int64_t key_size, const char* value,
-               int64_t value_size),
-              (override));
   MOCK_METHOD(Status, DeleteKeyValue, (std::string_view key), (override));
-  MOCK_METHOD(Status, DeleteKeyValue, (const char* key, int64_t key_size),
-              (override));
   MOCK_METHOD(Status, UpdateKeyValue,
               (std::string_view key, std::string_view value), (override));
   MOCK_METHOD(Status, StartWatchKey,
@@ -120,7 +110,7 @@ class MockCoordinationServiceAgent : public CoordinationServiceAgent {
               (override));
   MOCK_METHOD(void, CancelBarrierAsync,
               (std::string_view barrier_id, StatusCallback done), (override));
-  MOCK_METHOD(StatusOr<Env*>, GetEnv, (), (override));
+  MOCK_METHOD(absl::StatusOr<Env*>, GetEnv, (), (override));
   MOCK_METHOD(void, SetError, (const Status& error), (override));
   MOCK_METHOD(Status, ActivateWatch,
               (std::string_view key,
@@ -174,8 +164,8 @@ TEST(BarrierProxyTest, AllThreadsExitBarrier) {
       /*num_threads_planned=*/8,
       /*num_threads_entered=*/8,
       /*expected_ok_count=*/8,
-      /*agent_wait_status=*/OkStatus(),
-      /*expected_same_exit_status_for_all_threads=*/OkStatus());
+      /*agent_wait_status=*/absl::OkStatus(),
+      /*expected_same_exit_status_for_all_threads=*/absl::OkStatus());
 }
 
 TEST(BarrierProxyTest, AgentErrorBroadcastedToAllThreads) {
@@ -195,7 +185,7 @@ TEST(BarrierProxyTest, AgentIsIgnoredIfThereIsOnlyOneTask) {
       /*num_threads_entered=*/8,
       /*expected_ok_count=*/8,
       /*agent_wait_status=*/{},
-      /*expected_same_exit_status_for_all_threads=*/OkStatus());
+      /*expected_same_exit_status_for_all_threads=*/absl::OkStatus());
 }
 
 TEST(BarrierProxyTest, TimeoutIfNotEnoughThreadEntered) {
@@ -215,7 +205,7 @@ TEST(BarrierProxyTest, ExtraThreadsEnteringTheBarrierGetErrors) {
       /*num_threads_planned=*/8,
       /*num_threads_entered=*/10,
       /*expected_ok_count=*/8,
-      /*agent_wait_status=*/OkStatus(),
+      /*agent_wait_status=*/absl::OkStatus(),
       /*expected_same_exit_status_for_all_threads=*/{});
 }
 
@@ -251,7 +241,7 @@ TEST(BarrierProxyManagerTest, AllThreadExited) {
   TestBarrierProxyManagerWaitSingleKey(
       /*num_threads_planned=*/8,
       /*num_threads_entered=*/8,
-      /*agent_wait_status=*/OkStatus(),
+      /*agent_wait_status=*/absl::OkStatus(),
       /*expected_ok_count=*/8);
 }
 
@@ -275,7 +265,7 @@ TEST(BarrierProxyManagerTest, ExtraThreadsEnteringTheSameKeyGetErrors) {
   TestBarrierProxyManagerWaitSingleKey(
       /*num_threads_planned=*/8,
       /*num_threads_entered=*/10,
-      /*agent_wait_status=*/OkStatus(),
+      /*agent_wait_status=*/absl::OkStatus(),
       /*expected_ok_count=*/8);
 }
 
@@ -286,16 +276,16 @@ TEST(BarrierProxyManagerTest, DifferentKeysDoNotInterfereWithEachOther) {
   BarrierProxyManager mgr;
 
   EXPECT_CALL(*agent, WaitAtBarrier("key0", kTestTimeout, _))
-      .WillOnce(Return(OkStatus()));
+      .WillOnce(Return(absl::OkStatus()));
   EXPECT_CALL(*agent, WaitAtBarrier("key1", kTestTimeout, _))
-      .WillOnce(Return(OkStatus()));
+      .WillOnce(Return(absl::OkStatus()));
   {
     thread::ThreadPool pool(Env::Default(), /*name=*/"TestPool",
                             kThreadPoolSize);
     for (int i = 0; i < kNumThreads * 2; ++i) {
       pool.Schedule([&, key = absl::StrCat("key", i % 2)]() {
         ASSERT_EQ(mgr.Wait(agent.get(), tasks, kNumThreads, key, kTestTimeout),
-                  OkStatus());
+                  absl::OkStatus());
       });
     }
   }

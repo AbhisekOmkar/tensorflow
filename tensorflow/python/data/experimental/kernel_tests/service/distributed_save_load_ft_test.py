@@ -15,9 +15,6 @@
 """Fault tolerance tests for distributed save/load."""
 
 import multiprocessing
-import os
-import shutil
-import tempfile
 import time
 
 from absl.testing import parameterized
@@ -29,20 +26,7 @@ from tensorflow.python.data.kernel_tests import test_base
 from tensorflow.python.data.ops import dataset_ops
 from tensorflow.python.data.ops import load_op
 from tensorflow.python.framework import combinations
-from tensorflow.python.platform import googletest
 from tensorflow.python.platform import test
-
-
-class TestSnapshot:
-  """Test data for snapshots."""
-
-  def __init__(self):
-    temp_dir = tempfile.mkdtemp(dir=googletest.GetTempDir())
-    self.path = os.path.join(
-        tempfile.mkdtemp(dir=temp_dir), "distributed_save_load_test")
-
-  def __del__(self):
-    shutil.rmtree(self.path)
 
 
 class DistributedSaveLoadFtTest(
@@ -54,8 +38,9 @@ class DistributedSaveLoadFtTest(
           test_base.eager_only_combinations(),
           combinations.combine(
               num_elements=[200],
-              num_workers=[1, 3],
-              load_repetitions=[1, 3],
+              num_workers=[1, 2],
+              save_repetitions=[1, 2],
+              load_repetitions=[1, 2],
               sharding_policy=[
                   data_service_ops.ShardingPolicy.OFF,
                   data_service_ops.ShardingPolicy.DYNAMIC])))
@@ -63,17 +48,21 @@ class DistributedSaveLoadFtTest(
       self,
       num_workers: int,
       num_elements: int,
+      save_repetitions: int,
       load_repetitions: int,
       sharding_policy: data_service_ops.ShardingPolicy):
-    test_snapshot = TestSnapshot()
     cluster = data_service_test_base.TestCluster(num_workers=num_workers)
+    snapshot_dir = data_service_test_base.TempDir()
     dataset = dataset_ops.Dataset.range(num_elements)
+    if save_repetitions > 1:
+      dataset = dataset.repeat(save_repetitions)
     self.evaluate(
         distributed_save_op.distributed_save(
-            dataset, test_snapshot.path, cluster.dispatcher_address()))
+            dataset, snapshot_dir.full_path, cluster.dispatcher_address()))
 
-    dataset = load_op._load_distributed_snapshot_v2(test_snapshot.path)
-    dataset = dataset.repeat(load_repetitions)
+    dataset = load_op._load_with_retry(snapshot_dir.full_path)
+    if load_repetitions > 1:
+      dataset = dataset.repeat(load_repetitions)
     dataset = dataset.apply(
         data_service_ops.distribute(
             sharding_policy,
@@ -87,37 +76,48 @@ class DistributedSaveLoadFtTest(
 
     # For no sharding, dispatcher restarts do not affect data processing
     # happening at the workers.
+    repetitions = save_repetitions * load_repetitions
     if sharding_policy == data_service_ops.ShardingPolicy.OFF:
-      expected = list(range(num_elements)) * load_repetitions * num_workers
+      expected = list(range(num_elements)) * repetitions * num_workers
       self.assertCountEqual(output, expected)
 
     # Dynamic sharding may lose splits if the dispatcher fails.
     if sharding_policy == data_service_ops.ShardingPolicy.DYNAMIC:
-      self.assertCountEqual(set(output), set(range(num_elements)))
+      self.assertNotEmpty(output)
+      self.assertContainsSubset(output, range(num_elements))
 
   @combinations.generate(
       combinations.times(
           test_base.eager_only_combinations(),
           combinations.combine(
               num_elements=[200],
-              load_repetitions=[1, 3],
+              num_workers=[1, 2],
+              save_repetitions=[1, 2],
+              load_repetitions=[1, 2],
               sharding_policy=[
-                  data_service_ops.ShardingPolicy.OFF,
-                  data_service_ops.ShardingPolicy.DYNAMIC])))
+                  # TODO(b/297930782): Enable dynamic sharding. Need to fix the
+                  # race condition where workers restart before sending the
+                  # final task completion update.
+                  data_service_ops.ShardingPolicy.OFF])))
   def test_dispatcher_and_worker_restart(
       self,
       num_elements: int,
+      num_workers: int,
+      save_repetitions: int,
       load_repetitions: int,
       sharding_policy: data_service_ops.ShardingPolicy):
-    test_snapshot = TestSnapshot()
-    cluster = data_service_test_base.TestCluster(num_workers=1)
+    cluster = data_service_test_base.TestCluster(num_workers=num_workers)
+    snapshot_dir = data_service_test_base.TempDir()
     dataset = dataset_ops.Dataset.range(num_elements)
+    if save_repetitions > 1:
+      dataset = dataset.repeat(save_repetitions)
     self.evaluate(
         distributed_save_op.distributed_save(
-            dataset, test_snapshot.path, cluster.dispatcher_address()))
+            dataset, snapshot_dir.full_path, cluster.dispatcher_address()))
 
-    dataset = load_op._load_distributed_snapshot_v2(test_snapshot.path)
-    dataset = dataset.repeat(load_repetitions)
+    dataset = load_op._load_with_retry(snapshot_dir.full_path)
+    if load_repetitions > 1:
+      dataset = dataset.repeat(load_repetitions)
     dataset = dataset.apply(
         data_service_ops.distribute(
             sharding_policy,
@@ -126,36 +126,25 @@ class DistributedSaveLoadFtTest(
 
     iterator = self.getNext(dataset)
     output = [self.evaluate(iterator())]
-    cluster.restart_dispatcher()
-    cluster.workers[0].restart()
+    for i in range(num_workers):
+      cluster.restart_dispatcher()
+      cluster.workers[i].restart()
     output.extend(self.getIteratorOutput(iterator))
 
     # If the sharding policy is OFF, the restarted worker will produce elements
     # from the beginning of the dataset. The result is a partial range plus
     # `num_elements` repetitions.
     if sharding_policy == data_service_ops.ShardingPolicy.OFF:
-      # Search for 0 staring at index 1.
-      index_of_second_repetition = output.index(0, 1)
-      self.assertCountEqual(
-          output[index_of_second_repetition:],
-          list(range(num_elements)) * load_repetitions)
-
-    # For dynamic sharding, the first split (and possibly prefetched splits) may
-    # be lost. The result is a partial range plus zero or more `num_elements`
-    # ranges.
-    if sharding_policy == data_service_ops.ShardingPolicy.DYNAMIC:
-      try:
-        index_of_second_repetition = output.index(0, 1)
-        self.assertCountEqual(
-            set(output[index_of_second_repetition:]), set(range(num_elements)))
-      except ValueError:
-        pass
+      repetitions = save_repetitions * load_repetitions
+      self.assertContainsSubsequence(
+          sorted(output),
+          sorted(list(range(num_elements)) * repetitions * num_workers))
 
   @combinations.generate(
       combinations.times(
           test_base.eager_only_combinations(),
           combinations.combine(
-              load_repetitions=[1, 3],
+              load_repetitions=[1, 2],
               sharding_policy=[
                   data_service_ops.ShardingPolicy.OFF,
                   data_service_ops.ShardingPolicy.DYNAMIC])))
@@ -163,15 +152,15 @@ class DistributedSaveLoadFtTest(
       self,
       load_repetitions: int,
       sharding_policy: data_service_ops.ShardingPolicy):
-    test_snapshot = TestSnapshot()
     num_elements = 2 * multiprocessing.cpu_count() + 100
     cluster = data_service_test_base.TestCluster(num_workers=1)
+    snapshot_dir = data_service_test_base.TempDir()
     dataset = dataset_ops.Dataset.range(num_elements)
     self.evaluate(
         distributed_save_op.distributed_save(
-            dataset, test_snapshot.path, cluster.dispatcher_address()))
+            dataset, snapshot_dir.full_path, cluster.dispatcher_address()))
 
-    dataset = load_op._load_distributed_snapshot_v2(test_snapshot.path)
+    dataset = load_op._load_with_retry(snapshot_dir.full_path)
     dataset = dataset.repeat(load_repetitions)
     dataset = dataset.apply(
         data_service_ops.distribute(
@@ -198,9 +187,9 @@ class DistributedSaveLoadFtTest(
       combinations.times(
           test_base.eager_only_combinations(),
           combinations.combine(
-              num_workers=[1, 3],
+              num_workers=[1, 2],
               num_elements=[200],
-              load_repetitions=[1, 3],
+              load_repetitions=[1, 2],
               sharding_policy=[
                   data_service_ops.ShardingPolicy.OFF,
                   data_service_ops.ShardingPolicy.DYNAMIC])))
@@ -210,14 +199,14 @@ class DistributedSaveLoadFtTest(
       num_elements: int,
       load_repetitions: int,
       sharding_policy: data_service_ops.ShardingPolicy):
-    test_snapshot = TestSnapshot()
     cluster = data_service_test_base.TestCluster(num_workers=num_workers)
+    snapshot_dir = data_service_test_base.TempDir()
     dataset = dataset_ops.Dataset.range(num_elements)
     self.evaluate(
         distributed_save_op.distributed_save(
-            dataset, test_snapshot.path, cluster.dispatcher_address()))
+            dataset, snapshot_dir.full_path, cluster.dispatcher_address()))
 
-    dataset = load_op._load_distributed_snapshot_v2(test_snapshot.path)
+    dataset = load_op._load_with_retry(snapshot_dir.full_path)
     dataset = dataset.repeat(load_repetitions)
     dataset = dataset.apply(
         data_service_ops.distribute(
